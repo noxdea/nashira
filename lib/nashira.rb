@@ -223,20 +223,25 @@ module Nashira
         opts.on("--run-url URL") { |v| options[:run_url] = v }
         opts.on("--fail-on NAME") { |v| options[:fail_on] = v }
       end.parse!(argv.drop(argv.first == "build" ? 1 : 0))
-      tests = JUnit.parse(options[:junit]).value
-      coverage = CoverageParser.parse(options[:coverage], base: options[:base]).value
-      benchmarks = Benchmarks.parse(options[:bench]).value
+      tests_result = JUnit.parse(options[:junit])
+      coverage_result = CoverageParser.parse(options[:coverage], base: options[:base])
+      benchmarks_result = Benchmarks.parse(options[:bench])
+      tests = tests_result.value
+      coverage = coverage_result.value
+      benchmarks = benchmarks_result.value
+      warnings = tests_result.warnings + coverage_result.warnings + benchmarks_result.warnings
       history = History.load(options[:history])
-      report = Report.build(tests: tests, coverage: coverage, benchmarks: benchmarks, history: history,
+      point = options[:history] && HistoryPoint.new(commit: options[:commit], coverage: coverage&.percent,
+        tests: tests&.total, at: options[:now])
+      report = Report.build(tests: tests, coverage: coverage, benchmarks: benchmarks,
+        history: point ? history + [point] : history,
         repository: options[:title], branch: options[:branch], commit: options[:commit], run_url: options[:run_url], finished_at: options[:now])
       FileUtils.mkdir_p(File.dirname(options[:out]))
       FileUtils.mkdir_p(File.dirname(options[:summary]))
       File.binwrite(options[:out], Renderer.new(theme: Nashira.theme(options[:theme])).render(report))
       File.write(options[:summary], Summary.markdown(report, image: options[:out]))
-      if options[:history]
-        point = HistoryPoint.new(commit: options[:commit], coverage: coverage&.percent, tests: tests&.total, at: options[:now])
-        History.append(options[:history], point)
-      end
+      History.append(options[:history], point) if point
+      warnings.each { |warning| err.puts "nashira: warning: #{warning}" }
       (options[:fail_on] == "coverage-drop" && coverage&.delta.to_f.negative?) || (options[:fail_on] == "tests" && tests&.failed.to_i.positive?) ? 1 : 0
     rescue OptionParser::ParseError, KeyError, Error => error
       err.puts "nashira: #{error.message}"

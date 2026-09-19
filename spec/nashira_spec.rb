@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require "tempfile"
+require "stringio"
+require "fileutils"
 
 RSpec.describe Nashira do
   it "aggregates JUnit failures and skipped tests" do
@@ -26,5 +28,21 @@ RSpec.describe Nashira do
     tests = Nashira::Tests.new(total: 1, failed: 0, skipped: 0, duration: 0.1, slowest: [], failures: [])
     report = Nashira::Report.build(tests: tests)
     expect(Nashira::Summary.markdown(report)).to include("PASS")
+  end
+
+  it "keeps parser warnings visible and records the current history point" do
+    dir = Dir.mktmpdir("nashira-cli")
+    history = File.join(dir, "history.json")
+    junit = File.join(dir, "broken.xml")
+    File.write(junit, "<testsuite>")
+    out = StringIO.new
+    err = StringIO.new
+    expect(Nashira::CLI.run(["build", "--junit", junit, "--history", history,
+      "--now", "2026-01-01T00:00:00Z", "--out", File.join(dir, "card.png"),
+      "--summary", File.join(dir, "summary.md")], out: out, err: err)).to eq(0)
+    expect(err.string).to include("warning")
+    expect(File.read(history)).to include("2026-01-01T00:00:00Z")
+  ensure
+    FileUtils.remove_entry(dir) if dir
   end
 end

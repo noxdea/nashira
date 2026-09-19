@@ -44,12 +44,25 @@ runs:
       shell: bash
       run: gem install nashira --no-document
     - name: Restore report history
+      if: inputs.history-branch == ''
       uses: actions/cache@v4
       with:
         path: ${{ inputs.history }}
         key: nashira-history-${{ github.repository }}-${{ github.ref_name }}-${{ github.run_id }}
         restore-keys: |
           nashira-history-${{ github.repository }}-${{ github.ref_name }}-
+    - name: Restore branch history
+      if: inputs.history-branch != ''
+      shell: bash
+      env:
+        HISTORY_BRANCH: ${{ inputs.history-branch }}
+        HISTORY_PATH: ${{ inputs.history }}
+      run: |
+        set -euo pipefail
+        if git fetch --no-tags origin "refs/heads/${HISTORY_BRANCH}:refs/remotes/origin/${HISTORY_BRANCH}"; then
+          mkdir -p "$(dirname "$HISTORY_PATH")"
+          git show "refs/remotes/origin/${HISTORY_BRANCH}:${HISTORY_PATH}" > "$HISTORY_PATH" || true
+        fi
     - name: Build report
       shell: bash
       env:
@@ -60,7 +73,42 @@ runs:
         [[ -n "${{ inputs.coverage }}" ]] && args+=(--coverage "${{ inputs.coverage }}")
         [[ -n "${{ inputs.bench }}" ]] && args+=(--bench "${{ inputs.bench }}")
         nashira "${args[@]}"
-        cat "${{ inputs.summary }}" >> "$GITHUB_STEP_SUMMARY"
+    - name: Publish branch history and image
+      if: inputs.history-branch != ''
+      shell: bash
+      env:
+        HISTORY_BRANCH: ${{ inputs.history-branch }}
+        HISTORY_PATH: ${{ inputs.history }}
+        IMAGE_PATH: ${{ inputs.out }}
+      run: |
+        set -euo pipefail
+        workspace="$GITHUB_WORKSPACE"
+        branch_dir="$(mktemp -d)"
+        cleanup() { git worktree remove --force "$branch_dir" >/dev/null 2>&1 || true; rm -rf "$branch_dir"; }
+        trap cleanup EXIT
+        git worktree add --detach "$branch_dir" HEAD >/dev/null
+        cd "$branch_dir"
+        git checkout --orphan "$HISTORY_BRANCH" >/dev/null 2>&1
+        git rm -rf . >/dev/null 2>&1 || true
+        mkdir -p "$(dirname "$HISTORY_PATH")"
+        cp "$workspace/$HISTORY_PATH" "$HISTORY_PATH"
+        image_name="$(basename "$IMAGE_PATH")"
+        cp "$workspace/$IMAGE_PATH" "$image_name"
+        git add "$HISTORY_PATH" "$image_name"
+        git -c user.name=nashira -c user.email=nashira@users.noreply.github.com commit -m "Update CI report" >/dev/null
+        raw_url="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${HISTORY_BRANCH}/${image_name}"
+        git push origin "HEAD:${HISTORY_BRANCH}" --force >/dev/null || {
+          echo "nashira: unable to publish history branch; summary remains available"
+          exit 0
+        }
+        summary="$workspace/${{ inputs.summary }}"
+        if [[ -f "$summary" ]]; then
+          sed -i.bak "s#](${IMAGE_PATH})#](${raw_url})#g" "$summary"
+          rm -f "$summary.bak"
+        fi
+    - name: Append report summary
+      shell: bash
+      run: cat "${{ inputs.summary }}" >> "$GITHUB_STEP_SUMMARY"
     - name: Upsert pull request comment
       if: inputs.comment-on-pr == 'true' && github.event_name == 'pull_request'
       shell: bash
