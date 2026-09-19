@@ -206,7 +206,9 @@ module Nashira
     end
 
     def render(report)
-      window = Zaniah::Platform.open_window(backend: :headless, width: @width, height: @height)
+      app = Zaniah::App.new
+      window = app.open_window(backend: :headless, width: @width, height: @height)
+      app.global(:theme, @theme)
       window.text_system = @text_system if @text_system
       window.draw { View.call(report, theme: @theme) }
       window.tick
