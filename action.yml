@@ -22,6 +22,17 @@ inputs:
     description: Markdown output path
     required: false
     default: nashira-summary.md
+  history-branch:
+    description: Optional branch name reserved for persistent history
+    required: false
+  comment-on-pr:
+    description: Upsert the report as a pull request comment
+    required: false
+    default: 'false'
+  github-token:
+    description: Token used for pull request comments
+    required: false
+    default: ${{ github.token }}
 runs:
   using: composite
   steps:
@@ -32,6 +43,13 @@ runs:
     - name: Install Nashira
       shell: bash
       run: gem install nashira --no-document
+    - name: Restore report history
+      uses: actions/cache@v4
+      with:
+        path: ${{ inputs.history }}
+        key: nashira-history-${{ github.repository }}-${{ github.ref_name }}-${{ github.run_id }}
+        restore-keys: |
+          nashira-history-${{ github.repository }}-${{ github.ref_name }}-
     - name: Build report
       shell: bash
       env:
@@ -43,3 +61,18 @@ runs:
         [[ -n "${{ inputs.bench }}" ]] && args+=(--bench "${{ inputs.bench }}")
         nashira "${args[@]}"
         cat "${{ inputs.summary }}" >> "$GITHUB_STEP_SUMMARY"
+    - name: Upsert pull request comment
+      if: inputs.comment-on-pr == 'true' && github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: |
+        marker='<!-- nashira-report -->'
+        body="$marker\n$(cat '${{ inputs.summary }}')"
+        existing=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --jq '.[] | select(.body | contains("<!-- nashira-report -->")) | .id' | tail -1)
+        if [[ -n "$existing" ]]; then
+          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing}" -f body="$body"
+        else
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f body="$body"
+        fi || echo 'nashira: unable to update PR comment; summary remains available'
