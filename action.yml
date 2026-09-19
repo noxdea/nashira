@@ -42,7 +42,11 @@ runs:
         ruby-version: '3.3'
     - name: Install Nashira
       shell: bash
-      run: gem install nashira --no-document
+      run: |
+        set -euo pipefail
+        cd "${{ github.action_path }}"
+        gem build --strict nashira.gemspec
+        gem install ./nashira-*.gem --no-document
     - name: Restore report history
       if: inputs.history-branch == ''
       uses: actions/cache@v4
