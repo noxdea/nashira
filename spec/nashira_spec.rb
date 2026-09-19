@@ -24,6 +24,15 @@ RSpec.describe Nashira do
     path&.unlink
   end
 
+  it "accepts BOM-prefixed coverage JSON" do
+    path = Tempfile.new("coverage")
+    path.write("\uFEFF{\"percent\":91.5}")
+    path.close
+    expect(Nashira::CoverageParser.parse(path.path).value.percent).to eq(91.5)
+  ensure
+    path&.unlink
+  end
+
   it "renders a readable summary" do
     tests = Nashira::Tests.new(total: 1, failed: 0, skipped: 0, duration: 0.1, slowest: [], failures: [])
     report = Nashira::Report.build(tests: tests)

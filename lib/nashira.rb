@@ -40,7 +40,7 @@ module Nashira
       cases = []
       Array(paths).flat_map { |path| Dir[path.to_s] }.sort.each do |path|
         begin
-          root = REXML::Document.new(File.read(path, encoding: "UTF-8")).root
+          root = REXML::Document.new(File.read(path, encoding: "UTF-8").delete_prefix("\uFEFF")).root
           raise REXML::ParseException, "missing root" unless root
           root.each_element(".//testcase") do |testcase|
             time = Float(testcase.attributes["time"] || 0)
@@ -69,7 +69,7 @@ module Nashira
     def parse(path, base: nil)
       return ParseResult.new(value: nil, warnings: []) unless path && File.file?(path)
       warnings = []
-      data = JSON.parse(File.read(path, encoding: "UTF-8"))
+      data = JSON.parse(File.read(path, encoding: "UTF-8").delete_prefix("\uFEFF"))
       lines = data.dig("result", "line") || data.dig("result", "lines") || data.dig("metrics", "lines") || data["lines"] || {}
       percent = lines["percent"] || lines["covered_percent"] || data["covered_percent"] || data["percent"]
       covered = lines["covered"] || data["covered"]
@@ -88,7 +88,7 @@ module Nashira
 
     def parse(path)
       return ParseResult.new(value: [], warnings: []) unless path && File.file?(path)
-      value = JSON.parse(File.read(path, encoding: "UTF-8"))
+      value = JSON.parse(File.read(path, encoding: "UTF-8").delete_prefix("\uFEFF"))
       values = value.is_a?(Array) ? value : value.fetch("benchmarks", value.fetch("results", []))
       values = values.map.with_index do |entry, index|
         entry = {"value" => entry} unless entry.is_a?(Hash)
@@ -107,7 +107,7 @@ module Nashira
 
     def load(path)
       return [] unless path && File.file?(path)
-      values = JSON.parse(File.read(path, encoding: "UTF-8"))
+      values = JSON.parse(File.read(path, encoding: "UTF-8").delete_prefix("\uFEFF"))
       return [] unless values.is_a?(Array)
       values.filter_map do |entry|
         next unless entry.is_a?(Hash)
