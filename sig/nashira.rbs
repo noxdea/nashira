@@ -1,4 +1,9 @@
 module Nashira
   VERSION: String
-  # See the writing guide of rbs: https://github.com/ruby/rbs#guides
+  def self.theme: (untyped value) -> untyped
+  class Error < StandardError
+  end
+  class CLI
+    def self.run: (Array[String] argv, ?out: IO, ?err: IO) -> Integer
+  end
 end

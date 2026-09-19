@@ -77,7 +77,7 @@ module Nashira
       percent = covered.to_f * 100 / total if percent.zero? && covered && total && total.to_f.positive?
       ParseResult.new(value: CoverageData.new(percent: percent, covered: covered, total: total,
         delta: base.nil? ? nil : percent - base.to_f), warnings: warnings)
-    rescue JSON::ParserError, Errno::ENOENT => error
+    rescue JSON::ParserError, Errno::ENOENT, TypeError, NoMethodError => error
       ParseResult.new(value: nil, warnings: ["#{path}: #{error.message}"])
     end
   end
@@ -95,7 +95,7 @@ module Nashira
           unit: entry["unit"] || "", delta: entry["delta"])
       end
       ParseResult.new(value: values, warnings: [])
-    rescue JSON::ParserError, Errno::ENOENT => error
+    rescue JSON::ParserError, Errno::ENOENT, TypeError, NoMethodError => error
       ParseResult.new(value: [], warnings: ["#{path}: #{error.message}"])
     end
   end
