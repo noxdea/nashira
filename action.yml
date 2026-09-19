@@ -71,11 +71,16 @@ runs:
       shell: bash
       env:
         NASHIRA_JUNIT: ${{ inputs.junit }}
+        NASHIRA_COVERAGE: ${{ inputs.coverage }}
+        NASHIRA_BENCH: ${{ inputs.bench }}
+        NASHIRA_HISTORY: ${{ inputs.history }}
+        NASHIRA_OUT: ${{ inputs.out }}
+        NASHIRA_SUMMARY: ${{ inputs.summary }}
       run: |
-        args=(build --out "${{ inputs.out }}" --summary "${{ inputs.summary }}" --history "${{ inputs.history }}")
+        args=(build --out "$NASHIRA_OUT" --summary "$NASHIRA_SUMMARY" --history "$NASHIRA_HISTORY")
         [[ -n "$NASHIRA_JUNIT" ]] && args+=(--junit "$NASHIRA_JUNIT")
-        [[ -n "${{ inputs.coverage }}" ]] && args+=(--coverage "${{ inputs.coverage }}")
-        [[ -n "${{ inputs.bench }}" ]] && args+=(--bench "${{ inputs.bench }}")
+        [[ -n "$NASHIRA_COVERAGE" ]] && args+=(--coverage "$NASHIRA_COVERAGE")
+        [[ -n "$NASHIRA_BENCH" ]] && args+=(--bench "$NASHIRA_BENCH")
         nashira "${args[@]}"
     - name: Publish branch history and image
       if: inputs.history-branch != ''
@@ -84,6 +89,7 @@ runs:
         HISTORY_BRANCH: ${{ inputs.history-branch }}
         HISTORY_PATH: ${{ inputs.history }}
         IMAGE_PATH: ${{ inputs.out }}
+        SUMMARY_PATH: ${{ inputs.summary }}
       run: |
         set -euo pipefail
         workspace="$GITHUB_WORKSPACE"
@@ -105,23 +111,26 @@ runs:
           echo "nashira: unable to publish history branch; summary remains available"
           exit 0
         }
-        summary="$workspace/${{ inputs.summary }}"
+        summary="$workspace/$SUMMARY_PATH"
         if [[ -f "$summary" ]]; then
           sed -i.bak "s#](${IMAGE_PATH})#](${raw_url})#g" "$summary"
           rm -f "$summary.bak"
         fi
     - name: Append report summary
       shell: bash
-      run: cat "${{ inputs.summary }}" >> "$GITHUB_STEP_SUMMARY"
+      env:
+        SUMMARY_PATH: ${{ inputs.summary }}
+      run: cat "$SUMMARY_PATH" >> "$GITHUB_STEP_SUMMARY"
     - name: Upsert pull request comment
       if: inputs.comment-on-pr == 'true' && github.event_name == 'pull_request'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
+        SUMMARY_PATH: ${{ inputs.summary }}
       run: |
         marker='<!-- nashira-report -->'
-        body="$(printf '%s\n\n%s' "$marker" "$(cat '${{ inputs.summary }}')")"
+        body="$(printf '%s\n\n%s' "$marker" "$(cat "$SUMMARY_PATH")")"
         if ! existing=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --jq '.[] | select(.body | contains("<!-- nashira-report -->")) | .id' | tail -1); then
           echo 'nashira: unable to read PR comments; summary remains available'
           exit 0
