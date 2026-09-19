@@ -26,11 +26,12 @@ Gem::Specification.new do |spec|
   # Specify which files should be added to the gem when it is released.
   # The `git ls-files -z` loads the files in the RubyGem that have been added into git.
   gemspec = File.basename(__FILE__)
-  spec.files = IO.popen(%w[git ls-files -z], chdir: __dir__, err: IO::NULL) do |ls|
-    ls.readlines("\x0", chomp: true).reject do |f|
-      (f == gemspec) ||
-        f.start_with?(*%w[Gemfile .gitignore .rspec spec/ .github/])
-    end
+  files = IO.popen(%w[git ls-files -z], chdir: __dir__, err: IO::NULL) do |ls|
+    ls.readlines("\x0", chomp: true)
+  end
+  files = Dir.chdir(__dir__) { Dir["**/*"].select { |file| File.file?(file) } } if files.empty?
+  spec.files = files.reject do |file|
+    file == gemspec || file.start_with?(*%w[Gemfile .gitignore .rspec spec/ .github/])
   end
   spec.bindir = "bin"
   spec.executables = ["nashira"]
