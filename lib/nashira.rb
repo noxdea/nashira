@@ -1,11 +1,16 @@
 # frozen_string_literal: true
 
 require "json"
+require "fileutils"
 require "optparse"
 require "rexml/document"
 require "time"
 require "zlib"
 require "zaniah"
+begin
+  require "auva"
+rescue LoadError
+end
 require_relative "nashira/version"
 
 module Nashira
@@ -64,9 +69,10 @@ module Nashira
       return ParseResult.new(value: nil, warnings: []) unless path && File.file?(path)
       warnings = []
       data = JSON.parse(File.read(path, encoding: "UTF-8"))
-      percent = data.dig("result", "line")&.fetch("percent", nil) || data.dig("metrics", "lines", "percent") || data["covered_percent"] || data["percent"]
-      covered = data.dig("metrics", "lines", "covered") || data["covered"]
-      total = data.dig("metrics", "lines", "total") || data["total"]
+      lines = data.dig("result", "line") || data.dig("result", "lines") || data.dig("metrics", "lines") || data["lines"] || {}
+      percent = lines["percent"] || lines["covered_percent"] || data["covered_percent"] || data["percent"]
+      covered = lines["covered"] || data["covered"]
+      total = lines["total"] || data["total"]
       percent = percent.to_f
       percent = covered.to_f * 100 / total if percent.zero? && covered && total && total.to_f.positive?
       ParseResult.new(value: CoverageData.new(percent: percent, covered: covered, total: total,
@@ -109,7 +115,7 @@ module Nashira
 
     def append(path, point)
       values = load(path) + [point]
-      Dir.mkdir(File.dirname(path)) unless Dir.exist?(File.dirname(path))
+      FileUtils.mkdir_p(File.dirname(path))
       File.write(path, JSON.pretty_generate(values.last(MAX).map(&:to_h)) + "\n")
       values.last(MAX)
     end
@@ -137,6 +143,21 @@ module Nashira
     end
   end
 
+  module View
+    module_function
+
+    def call(report, theme: Zaniah::Theme.dark)
+      title = "[#{report.status.to_s.upcase}] #{report.repository || "CI report"}"
+      lines = [title]
+      lines << "Tests: #{report.tests.total} (#{report.tests.failed} failed)" if report.tests
+      lines << "Coverage: #{format("%.2f", report.coverage.percent)}%" if report.coverage
+      lines.concat(report.benchmarks.first(3).map { |bench| "#{bench.name}: #{bench.value} #{bench.unit}" })
+      Zaniah::Div.new.flex_col.p(48).gap(18).bg(theme.colors.background)
+        .child(Zaniah::Text.new(title, size: 32, color: report.status == :pass ? theme.colors.success : theme.colors.danger))
+        .child(Zaniah::Text.new(lines.drop(1).join("\n"), size: 18, color: theme.colors.text))
+    end
+  end
+
   class Renderer
     def initialize(theme: Zaniah::Theme.dark, width: 1200, height: 800)
       @theme, @width, @height = theme, width, height
@@ -150,13 +171,7 @@ module Nashira
     def render(report)
       window = Zaniah::Platform.open_window(backend: :headless, width: @width, height: @height)
       window.text_system = @text_system if @text_system
-      title = "[#{report.status.to_s.upcase}] #{report.repository || "CI report"}"
-      body = Summary.markdown(report).lines.first(8).join.strip
-      window.draw do
-        Zaniah::Div.new.flex_col.p(48).gap(18).bg(@theme.colors.background)
-          .child(Zaniah::Text.new(title, size: 32, color: report.status == :pass ? @theme.colors.success : @theme.colors.danger))
-          .child(Zaniah::Text.new(body, size: 18, color: @theme.colors.text))
-      end
+      window.draw { View.call(report, theme: @theme) }
       window.tick
       device = window.device
       Zaniah::PNG.encode(device.width.to_i, device.height.to_i, device.pixels)
@@ -165,9 +180,20 @@ module Nashira
     end
   end
 
+  module_function
+
+  def theme(value)
+    return value if value.respond_to?(:colors)
+    return Auva.load(value) if defined?(Auva) && File.file?(value.to_s)
+    return Auva.builtin(value) if defined?(Auva)
+    Zaniah::Theme.public_send(value.to_s)
+  rescue NoMethodError
+    raise Error, "unknown theme: #{value}"
+  end
+
   class CLI
     def self.run(argv, out: $stdout, err: $stderr)
-      options = {junit: [], coverage: nil, bench: nil, history: nil, out: "card.png", summary: "summary.md", base: nil, now: Time.now.utc.iso8601, title: nil, fail_on: nil}
+      options = {junit: [], coverage: nil, bench: nil, history: nil, out: "card.png", summary: "summary.md", base: nil, now: Time.now.utc.iso8601, title: nil, theme: :dark, branch: nil, commit: nil, run_url: nil, fail_on: nil}
       OptionParser.new do |opts|
         opts.banner = "Usage: nashira build [options]"
         opts.on("--junit GLOB") { |v| options[:junit] << v }
@@ -179,6 +205,10 @@ module Nashira
         opts.on("--out PATH") { |v| options[:out] = v }
         opts.on("--summary PATH") { |v| options[:summary] = v }
         opts.on("--title TITLE") { |v| options[:title] = v }
+        opts.on("--theme NAME") { |v| options[:theme] = v }
+        opts.on("--branch NAME") { |v| options[:branch] = v }
+        opts.on("--commit SHA") { |v| options[:commit] = v }
+        opts.on("--run-url URL") { |v| options[:run_url] = v }
         opts.on("--fail-on NAME") { |v| options[:fail_on] = v }
       end.parse!(argv.drop(argv.first == "build" ? 1 : 0))
       tests = JUnit.parse(options[:junit]).value
@@ -186,10 +216,14 @@ module Nashira
       benchmarks = Benchmarks.parse(options[:bench]).value
       history = History.load(options[:history])
       report = Report.build(tests: tests, coverage: coverage, benchmarks: benchmarks, history: history,
-        repository: options[:title], finished_at: options[:now])
-      File.binwrite(options[:out], Renderer.new.render(report))
+        repository: options[:title], branch: options[:branch], commit: options[:commit], run_url: options[:run_url], finished_at: options[:now])
+      File.binwrite(options[:out], Renderer.new(theme: Nashira.theme(options[:theme])).render(report))
       File.write(options[:summary], Summary.markdown(report, image: options[:out]))
-      options[:fail_on] == "coverage-drop" && coverage&.delta.to_f.negative? ? 1 : 0
+      if options[:history]
+        point = HistoryPoint.new(commit: options[:commit], coverage: coverage&.percent, tests: tests&.total, at: options[:now])
+        History.append(options[:history], point)
+      end
+      (options[:fail_on] == "coverage-drop" && coverage&.delta.to_f.negative?) || (options[:fail_on] == "tests" && tests&.failed.to_i.positive?) ? 1 : 0
     rescue OptionParser::ParseError, KeyError, Error => error
       err.puts "nashira: #{error.message}"
       1

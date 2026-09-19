@@ -1,0 +1,45 @@
+name: Nashira CI report
+description: Render a deterministic CI report card and Job Summary
+inputs:
+  junit:
+    description: JUnit glob
+    required: false
+  coverage:
+    description: SimpleCov JSON path
+    required: false
+  bench:
+    description: Benchmark JSON path
+    required: false
+  history:
+    description: History JSON path
+    required: false
+    default: .ci-history/history.json
+  out:
+    description: PNG output path
+    required: false
+    default: nashira-card.png
+  summary:
+    description: Markdown output path
+    required: false
+    default: nashira-summary.md
+runs:
+  using: composite
+  steps:
+    - name: Set up Ruby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.3'
+    - name: Install Nashira
+      shell: bash
+      run: gem install nashira --no-document
+    - name: Build report
+      shell: bash
+      env:
+        NASHIRA_JUNIT: ${{ inputs.junit }}
+      run: |
+        args=(build --out "${{ inputs.out }}" --summary "${{ inputs.summary }}" --history "${{ inputs.history }}")
+        [[ -n "$NASHIRA_JUNIT" ]] && args+=(--junit "$NASHIRA_JUNIT")
+        [[ -n "${{ inputs.coverage }}" ]] && args+=(--coverage "${{ inputs.coverage }}")
+        [[ -n "${{ inputs.bench }}" ]] && args+=(--bench "${{ inputs.bench }}")
+        nashira "${args[@]}"
+        cat "${{ inputs.summary }}" >> "$GITHUB_STEP_SUMMARY"
