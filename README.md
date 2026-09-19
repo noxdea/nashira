@@ -22,7 +22,9 @@ nashira build --junit 'tmp/junit/*.xml' \
 
 Use `--fail-on coverage-drop` (or `--fail-on tests`) in CI. The composite
 action in [`action.yml`](action.yml) installs the gem and appends the summary to
-`GITHUB_STEP_SUMMARY`.
+`GITHUB_STEP_SUMMARY`. Set `history-branch` to persist the history and image on
+an orphan branch; that workflow needs `contents: write`. Without it, the
+action falls back to the cache and still emits the Markdown summary.
 
 ## Development
 
