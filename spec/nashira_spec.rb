@@ -45,4 +45,13 @@ RSpec.describe Nashira do
   ensure
     FileUtils.remove_entry(dir) if dir
   end
+
+  it "ignores malformed history shapes" do
+    path = Tempfile.new("history")
+    path.write('{"not":"an array"}')
+    path.close
+    expect(Nashira::History.load(path.path)).to eq([])
+  ensure
+    path&.unlink
+  end
 end

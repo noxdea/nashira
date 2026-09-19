@@ -106,10 +106,13 @@ module Nashira
 
     def load(path)
       return [] unless path && File.file?(path)
-      JSON.parse(File.read(path, encoding: "UTF-8")).map do |entry|
+      values = JSON.parse(File.read(path, encoding: "UTF-8"))
+      return [] unless values.is_a?(Array)
+      values.filter_map do |entry|
+        next unless entry.is_a?(Hash)
         HistoryPoint.new(commit: entry["commit"], coverage: entry["coverage"], tests: entry["tests"], at: entry["at"])
       end
-    rescue JSON::ParserError, Errno::ENOENT
+    rescue JSON::ParserError, Errno::ENOENT, TypeError
       []
     end
 
