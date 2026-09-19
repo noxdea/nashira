@@ -37,19 +37,21 @@ runs:
   using: composite
   steps:
     - name: Set up Ruby
-      uses: ruby/setup-ruby@v1
+      uses: ruby/setup-ruby@984c0c890880bbf811283d6f09c4607c62d210a4 # v1.323.0
       with:
         ruby-version: '3.3'
     - name: Install Nashira
       shell: bash
+      env:
+        NASHIRA_ACTION_PATH: ${{ github.action_path }}
       run: |
         set -euo pipefail
-        cd "${{ github.action_path }}"
+        cd "$NASHIRA_ACTION_PATH"
         gem build --strict nashira.gemspec
         gem install ./nashira-*.gem --no-document
     - name: Restore report history
       if: inputs.history-branch == ''
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: ${{ inputs.history }}
         key: nashira-history-${{ github.repository }}-${{ github.ref_name }}-${{ github.run_id }}
