@@ -54,4 +54,16 @@ RSpec.describe Nashira do
   ensure
     path&.unlink
   end
+
+  it "replaces the trend with failed tests on a failed report" do
+    tests = Nashira::Tests.new(total: 2, failed: 1, skipped: 0, duration: 1.0,
+      slowest: [["slow", 0.9]], failures: ["broken"])
+    history = [Nashira::HistoryPoint.new(commit: "a", coverage: 80, tests: 1, at: "t"),
+      Nashira::HistoryPoint.new(commit: "b", coverage: 81, tests: 2, at: "t")]
+    report = Nashira::Report.build(tests: tests, history: history)
+    summary = Nashira::Summary.markdown(report)
+    expect(summary).to include("Failed tests", "broken")
+    expect(summary).not_to include("Coverage trend")
+    expect(Nashira::View.call(report)).to be_a(Zaniah::Div)
+  end
 end

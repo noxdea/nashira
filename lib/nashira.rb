@@ -139,7 +139,7 @@ module Nashira
         lines << "| Coverage | #{format("%.2f", report.coverage.percent)}%#{delta} |"
       end
       report.benchmarks.each { |bench| lines << "| #{bench.name} | #{bench.value} #{bench.unit} |" }
-      if report.history.length > 1
+      if report.status != :fail && report.history.length > 1
         trend = report.history.last(20).filter_map(&:coverage).map { |value| format("%.2f", value) }.join(" → ")
         lines << "| Coverage trend | #{trend} |"
       end
@@ -147,7 +147,7 @@ module Nashira
         lines.concat(["", "### Slowest tests", *report.tests.slowest.map { |name, seconds| "- `#{name}` (#{format("%.3f", seconds)}s)" }])
       end
       if report.tests&.failures&.any?
-        lines.concat(["", "### Failed tests", *report.tests.failures.map { |name| "- `#{name}`" }])
+        lines.concat(["", "### Failed tests", *report.tests.failures.map { |name| "- `#{name}`" }]) if report.status == :fail
       end
       lines.join("\n") + "\n"
     end
@@ -162,11 +162,15 @@ module Nashira
       lines << "Tests: #{report.tests.total} (#{report.tests.failed} failed)" if report.tests
       lines << "Coverage: #{format("%.2f", report.coverage.percent)}%" if report.coverage
       lines.concat(report.benchmarks.first(3).map { |bench| "#{bench.name}: #{bench.value} #{bench.unit}" })
-      if report.history.length > 1
+      if report.status != :fail && report.history.length > 1
         values = report.history.last(20).filter_map(&:coverage)
         lines << "Trend: #{values.map { |value| format("%.1f", value) }.join(" → ")}"
       end
-      lines.concat(report.tests.slowest.first(3).map { |name, seconds| "Slow: #{name} (#{format("%.3f", seconds)}s)" }) if report.tests
+      if report.status == :fail && report.tests&.failures&.any?
+        lines.concat(report.tests.failures.first(8).map { |name| "Failed: #{name}" })
+      else
+        lines.concat(report.tests.slowest.first(3).map { |name, seconds| "Slow: #{name} (#{format("%.3f", seconds)}s)" }) if report.tests
+      end
       Zaniah::Div.new.flex_col.p(48).gap(18).bg(theme.colors.background)
         .child(Zaniah::Text.new(title, size: 32, color: report.status == :pass ? theme.colors.success : theme.colors.danger))
         .child(Zaniah::Text.new(lines.drop(1).join("\n"), size: 18, color: theme.colors.text))
