@@ -1,0 +1,9 @@
+module Nashira
+  VERSION: String
+  def self.theme: (untyped value) -> untyped
+  class Error < StandardError
+  end
+  class CLI
+    def self.run: (Array[String] argv, ?out: IO, ?err: IO) -> Integer
+  end
+end

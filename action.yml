@@ -1,0 +1,144 @@
+name: Nashira CI report
+description: Render a deterministic CI report card and Job Summary
+inputs:
+  junit:
+    description: JUnit glob
+    required: false
+  coverage:
+    description: SimpleCov JSON path
+    required: false
+  bench:
+    description: Benchmark JSON path
+    required: false
+  history:
+    description: History JSON path
+    required: false
+    default: .ci-history/history.json
+  out:
+    description: PNG output path
+    required: false
+    default: nashira-card.png
+  summary:
+    description: Markdown output path
+    required: false
+    default: nashira-summary.md
+  history-branch:
+    description: Optional branch name reserved for persistent history
+    required: false
+  comment-on-pr:
+    description: Upsert the report as a pull request comment
+    required: false
+    default: 'false'
+  github-token:
+    description: Token used for pull request comments
+    required: false
+    default: ${{ github.token }}
+runs:
+  using: composite
+  steps:
+    - name: Set up Ruby
+      uses: ruby/setup-ruby@984c0c890880bbf811283d6f09c4607c62d210a4 # v1.323.0
+      with:
+        ruby-version: '3.3'
+    - name: Install Nashira
+      shell: bash
+      env:
+        NASHIRA_ACTION_PATH: ${{ github.action_path }}
+      run: | # zizmor: ignore[adhoc-packages]
+        set -euo pipefail
+        cd "$NASHIRA_ACTION_PATH"
+        gem build --strict nashira.gemspec
+        gem install ./nashira-*.gem --no-document
+    - name: Restore report history
+      if: inputs.history-branch == ''
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ${{ inputs.history }}
+        key: nashira-history-${{ github.repository }}-${{ github.ref_name }}-${{ github.run_id }}
+        restore-keys: |
+          nashira-history-${{ github.repository }}-${{ github.ref_name }}-
+    - name: Restore branch history
+      if: inputs.history-branch != ''
+      shell: bash
+      env:
+        HISTORY_BRANCH: ${{ inputs.history-branch }}
+        HISTORY_PATH: ${{ inputs.history }}
+      run: |
+        set -euo pipefail
+        if git fetch --no-tags origin "refs/heads/${HISTORY_BRANCH}:refs/remotes/origin/${HISTORY_BRANCH}"; then
+          mkdir -p "$(dirname "$HISTORY_PATH")"
+          git show "refs/remotes/origin/${HISTORY_BRANCH}:${HISTORY_PATH}" > "$HISTORY_PATH" || true
+        fi
+    - name: Build report
+      shell: bash
+      env:
+        NASHIRA_JUNIT: ${{ inputs.junit }}
+        NASHIRA_COVERAGE: ${{ inputs.coverage }}
+        NASHIRA_BENCH: ${{ inputs.bench }}
+        NASHIRA_HISTORY: ${{ inputs.history }}
+        NASHIRA_OUT: ${{ inputs.out }}
+        NASHIRA_SUMMARY: ${{ inputs.summary }}
+      run: |
+        args=(build --out "$NASHIRA_OUT" --summary "$NASHIRA_SUMMARY" --history "$NASHIRA_HISTORY")
+        [[ -n "$NASHIRA_JUNIT" ]] && args+=(--junit "$NASHIRA_JUNIT")
+        [[ -n "$NASHIRA_COVERAGE" ]] && args+=(--coverage "$NASHIRA_COVERAGE")
+        [[ -n "$NASHIRA_BENCH" ]] && args+=(--bench "$NASHIRA_BENCH")
+        nashira "${args[@]}"
+    - name: Publish branch history and image
+      if: inputs.history-branch != ''
+      shell: bash
+      env:
+        HISTORY_BRANCH: ${{ inputs.history-branch }}
+        HISTORY_PATH: ${{ inputs.history }}
+        IMAGE_PATH: ${{ inputs.out }}
+        SUMMARY_PATH: ${{ inputs.summary }}
+      run: |
+        set -euo pipefail
+        workspace="$GITHUB_WORKSPACE"
+        branch_dir="$(mktemp -d)"
+        cleanup() { git worktree remove --force "$branch_dir" >/dev/null 2>&1 || true; rm -rf "$branch_dir"; }
+        trap cleanup EXIT
+        git worktree add --detach "$branch_dir" HEAD >/dev/null
+        cd "$branch_dir"
+        git checkout --orphan "$HISTORY_BRANCH" >/dev/null 2>&1
+        git rm -rf . >/dev/null 2>&1 || true
+        mkdir -p "$(dirname "$HISTORY_PATH")"
+        cp "$workspace/$HISTORY_PATH" "$HISTORY_PATH"
+        image_name="$(basename "$IMAGE_PATH")"
+        cp "$workspace/$IMAGE_PATH" "$image_name"
+        git add "$HISTORY_PATH" "$image_name"
+        git -c user.name=nashira -c user.email=nashira@users.noreply.github.com commit -m "Update CI report" >/dev/null
+        raw_url="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${HISTORY_BRANCH}/${image_name}"
+        git push origin "HEAD:${HISTORY_BRANCH}" --force >/dev/null || {
+          echo "nashira: unable to publish history branch; summary remains available"
+          exit 0
+        }
+        summary="$workspace/$SUMMARY_PATH"
+        if [[ -f "$summary" ]]; then
+          sed -i.bak "s#](${IMAGE_PATH})#](${raw_url})#g" "$summary"
+          rm -f "$summary.bak"
+        fi
+    - name: Append report summary
+      shell: bash
+      env:
+        SUMMARY_PATH: ${{ inputs.summary }}
+      run: cat "$SUMMARY_PATH" >> "$GITHUB_STEP_SUMMARY"
+    - name: Upsert pull request comment
+      if: inputs.comment-on-pr == 'true' && github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        SUMMARY_PATH: ${{ inputs.summary }}
+      run: |
+        marker='<!-- nashira-report -->'
+        body="$(printf '%s\n\n%s' "$marker" "$(cat "$SUMMARY_PATH")")"
+        if ! existing=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --jq '.[] | select(.body | contains("<!-- nashira-report -->")) | .id' | tail -1); then
+          echo 'nashira: unable to read PR comments; summary remains available'
+          exit 0
+        fi
+        if [[ -n "$existing" ]]; then
+          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing}" -f body="$body"
+        else
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f body="$body"
+        fi || echo 'nashira: unable to update PR comment; summary remains available'
