@@ -122,7 +122,10 @@ runs:
       run: |
         marker='<!-- nashira-report -->'
         body="$(printf '%s\n\n%s' "$marker" "$(cat '${{ inputs.summary }}')")"
-        existing=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --jq '.[] | select(.body | contains("<!-- nashira-report -->")) | .id' | tail -1)
+        if ! existing=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --jq '.[] | select(.body | contains("<!-- nashira-report -->")) | .id' | tail -1); then
+          echo 'nashira: unable to read PR comments; summary remains available'
+          exit 0
+        fi
         if [[ -n "$existing" ]]; then
           gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing}" -f body="$body"
         else
