@@ -7,6 +7,7 @@ require "rexml/document"
 require "time"
 require "zlib"
 require "zaniah"
+require "zaniah/ui"
 begin
   require "auva"
 rescue LoadError
@@ -158,22 +159,39 @@ module Nashira
 
     def call(report, theme: Zaniah::Theme.dark)
       title = "[#{report.status.to_s.upcase}] #{report.repository || "CI report"}"
-      lines = [title]
-      lines << "Tests: #{report.tests.total} (#{report.tests.failed} failed)" if report.tests
-      lines << "Coverage: #{format("%.2f", report.coverage.percent)}%" if report.coverage
-      lines.concat(report.benchmarks.first(3).map { |bench| "#{bench.name}: #{bench.value} #{bench.unit}" })
-      if report.status != :fail && report.history.length > 1
+      status = report.status == :pass ? :success : :danger
+      header = Zaniah::UI::Card.new(
+        Zaniah::UI::Label.new(title, size: :xl),
+        Zaniah::UI::Badge.new(report.status.to_s.upcase, variant: status)
+      )
+      metrics = Zaniah::Div.new.flex_row.gap(12).children([
+        metric("Tests", report.tests && "#{report.tests.total} (#{report.tests.failed} failed)", theme),
+        metric("Coverage", report.coverage && format("%.2f%%", report.coverage.percent), theme),
+        *report.benchmarks.first(3).map { |bench| metric(bench.name, "#{bench.value} #{bench.unit}", theme) }
+      ].compact)
+      trend = if report.status != :fail && report.history.length > 1
         values = report.history.last(20).filter_map(&:coverage)
-        lines << "Trend: #{values.map { |value| format("%.1f", value) }.join(" → ")}"
+        Zaniah::UI::Card.new(Zaniah::UI::Label.new("Coverage trend", size: :md), Zaniah::UI::Sparkline.new(values, width: 640, height: 120)) unless values.empty?
+      elsif report.tests&.failures&.any?
+        Zaniah::UI::Card.new(Zaniah::UI::Label.new("Failed tests", size: :md),
+          *report.tests.failures.first(8).map { |name| Zaniah::UI::Label.new(name, tone: :muted, size: :sm) })
       end
-      if report.status == :fail && report.tests&.failures&.any?
-        lines.concat(report.tests.failures.first(8).map { |name| "Failed: #{name}" })
-      else
-        lines.concat(report.tests.slowest.first(3).map { |name, seconds| "Slow: #{name} (#{format("%.3f", seconds)}s)" }) if report.tests
+      slow = if report.tests&.slowest&.any?
+        rows = report.tests.slowest.map { |name, seconds| {name: name, duration: format("%.3fs", seconds)} }
+        Zaniah::UI::Table.new(rows, columns: [
+          {key: :name, label: "Test", width: 560, sortable: false},
+          {key: :duration, label: "Duration", width: 140, sortable: false}
+        ], height: [rows.length * 32 + 40, 100].max, selection: :none)
       end
-      Zaniah::Div.new.flex_col.p(48).gap(18).bg(theme.colors.background)
-        .child(Zaniah::Text.new(title, size: 32, color: report.status == :pass ? theme.colors.success : theme.colors.danger))
-        .child(Zaniah::Text.new(lines.drop(1).join("\n"), size: 18, color: theme.colors.text))
+      root = Zaniah::Div.new.flex_col.p(48).gap(18).bg(theme.colors.background).child(header).child(metrics)
+      root.child(trend) if trend
+      root.child(Zaniah::UI::Card.new(Zaniah::UI::Label.new("Slowest tests", size: :md), slow)) if slow
+      root
+    end
+
+    def metric(label, value, _theme)
+      return unless value
+      Zaniah::UI::Card.new(Zaniah::UI::Label.new(label, tone: :muted, size: :xs), Zaniah::UI::Label.new(value, size: :lg))
     end
   end
 
